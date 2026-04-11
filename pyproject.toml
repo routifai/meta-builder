@@ -31,6 +31,9 @@ include = ["agent*", "mcp*"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-v"
+markers = [
+    "functional: real-API smoke tests, not mocked (deselect with -m 'not functional')",
+]
 
 [tool.ruff]
 line-length = 100
