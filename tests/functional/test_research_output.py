@@ -1,8 +1,9 @@
 """
 Functional tests on the researcher output.
 
-All tests share the session-scoped pipeline_run fixture (one real API call).
-Tests are automatically skipped if the intent block was blocked by HumanInputRequired.
+Uses two session-scoped fixtures:
+  pipeline_run     — vague goal, no integrations (tests fallback domain handling)
+  pipeline_run_mcp — MCP/Perplexity goal with explicit integrations (tests domain coverage)
 """
 from __future__ import annotations
 
@@ -137,3 +138,61 @@ class TestResearchQuality:
             assert tool_hint in content, (
                 f"Skill file {domain}.md does not mention its recommended tool {tool!r}"
             )
+
+
+class TestMCPPipelineResearch:
+    """
+    Researcher tests using the MCP/Perplexity goal — has explicit integrations,
+    known build_target, and deploy_target. This fixture exercises the full
+    domain-coverage path that the vague goal skips over.
+    """
+
+    def test_recommended_stack_non_empty(self, pipeline_run_mcp):
+        _require_research(pipeline_run_mcp)
+        assert len(pipeline_run_mcp["research"]["recommended_stack"]) >= 2, (
+            "MCP goal should produce at least 2 domain entries (integration + build target)"
+        )
+
+    def test_domains_cover_integrations(self, pipeline_run_mcp):
+        """Perplexity is an explicit integration — its domain must appear in the stack."""
+        _require_research(pipeline_run_mcp)
+        spec = pipeline_run_mcp["spec"]
+        integrations = spec.get("integrations", [])
+        assert integrations, "MCP fixture should have at least one integration"
+        stack_keys = " ".join(pipeline_run_mcp["research"]["recommended_stack"].keys()).lower()
+        for integration in integrations:
+            assert integration.lower() in stack_keys, (
+                f"Integration {integration!r} not covered in recommended_stack: "
+                f"{list(pipeline_run_mcp['research']['recommended_stack'].keys())}"
+            )
+
+    def test_mcp_domain_in_stack(self, pipeline_run_mcp):
+        """build_target=mcp-server must map to the mcp-protocol domain."""
+        _require_research(pipeline_run_mcp)
+        stack_keys = list(pipeline_run_mcp["research"]["recommended_stack"].keys())
+        assert any("mcp" in k.lower() for k in stack_keys), (
+            f"mcp-protocol domain missing from stack: {stack_keys}"
+        )
+
+    def test_skills_written_for_mcp_and_perplexity(self, pipeline_run_mcp):
+        _require_research(pipeline_run_mcp)
+        skills_dir = pipeline_run_mcp["skills_dir"]
+        written_names = [
+            p.name for p in skills_dir.iterdir() if p.suffix == ".md"
+        ]
+        assert any("perplexity" in n for n in written_names), (
+            f"No perplexity skill file written. Files: {written_names}"
+        )
+        assert any("mcp" in n for n in written_names), (
+            f"No mcp skill file written. Files: {written_names}"
+        )
+
+    def test_concurrent_research_all_domains_written(self, pipeline_run_mcp):
+        """With concurrent gather, all domains must complete — none silently dropped."""
+        _require_research(pipeline_run_mcp)
+        stack = pipeline_run_mcp["research"]["recommended_stack"]
+        skills_written = pipeline_run_mcp["research"]["skills_written"]
+        assert len(stack) == len(skills_written), (
+            f"Domain count mismatch: {len(stack)} in stack vs {len(skills_written)} files written.\n"
+            f"Stack: {list(stack.keys())}\nFiles: {skills_written}"
+        )

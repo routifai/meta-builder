@@ -1,14 +1,15 @@
 """
-Session-scoped pipeline fixture for functional tests.
+Session-scoped pipeline fixtures for functional tests.
 
-Runs the full implemented pipeline exactly ONCE per pytest session.
-All functional test modules share this one expensive result.
+Two fixtures, each runs once per pytest session:
 
-The pipeline under test:
-    prompt_parser → ambiguity_scorer → defaults_agent → researcher
+  pipeline_run     — "build an agent capable of deep research and deploy to fly.io"
+                     Exercises: vague build_target, no integrations, deploy target defaulted.
 
-Goal used: "build an agent capable of deep research and deploy to fly.io"
-This goal is intentionally slightly vague on build_target to exercise real parser behavior.
+  pipeline_run_mcp — "build an MCP server for Perplexity search and deploy to fly.io"
+                     Exercises: known build_target, explicit integration, all fields resolved.
+
+All functional test modules share these — expensive API calls happen exactly once.
 """
 from __future__ import annotations
 
@@ -21,32 +22,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 FUNCTIONAL_GOAL = "build an agent capable of deep research and deploy to fly.io"
+FUNCTIONAL_GOAL_MCP = "build an MCP server for Perplexity search and deploy to fly.io"
 
 
-@pytest.fixture(scope="session")
-def pipeline_run(tmp_path_factory):
-    """
-    Run the intent block + researcher once per session. Returns a dict with:
-      - goal: str
-      - parsed: ParsedGoal
-      - scored: ScoredUnknowns
-      - spec: IntentSpec  (None if HumanInputRequired was raised)
-      - human_input_required: list[str]  (non-empty if spec is None)
-      - research: ResearchResult  (None if spec is None or researcher failed)
-      - skills_dir: Path  (where skill files were written)
-      - error: Exception | None
-    """
+def _run_pipeline(goal: str, skills_dir: Path) -> dict:
+    """Shared pipeline execution — returns the standard result dict."""
     from agent.intent.prompt_parser import parse_prompt
     from agent.intent.ambiguity_scorer import score_unknowns
     from agent.intent.defaults_agent import fill_defaults, HumanInputRequired
     from agent.mesh.researcher import run as researcher_run
 
-    tmp = tmp_path_factory.mktemp("functional_run")
-    skills_dir = tmp / "skills"
-    skills_dir.mkdir()
-
     result: dict = {
-        "goal": FUNCTIONAL_GOAL,
+        "goal": goal,
         "parsed": None,
         "scored": None,
         "spec": None,
@@ -57,7 +44,7 @@ def pipeline_run(tmp_path_factory):
     }
 
     try:
-        result["parsed"] = parse_prompt(FUNCTIONAL_GOAL)
+        result["parsed"] = parse_prompt(goal)
         result["scored"] = score_unknowns(result["parsed"])
 
         try:
@@ -75,3 +62,21 @@ def pipeline_run(tmp_path_factory):
         raise
 
     return result
+
+
+@pytest.fixture(scope="session")
+def pipeline_run(tmp_path_factory):
+    """Run the deep-research goal pipeline once per session."""
+    tmp = tmp_path_factory.mktemp("functional_run")
+    skills_dir = tmp / "skills"
+    skills_dir.mkdir()
+    return _run_pipeline(FUNCTIONAL_GOAL, skills_dir)
+
+
+@pytest.fixture(scope="session")
+def pipeline_run_mcp(tmp_path_factory):
+    """Run the MCP/Perplexity goal pipeline once per session."""
+    tmp = tmp_path_factory.mktemp("functional_run_mcp")
+    skills_dir = tmp / "skills"
+    skills_dir.mkdir()
+    return _run_pipeline(FUNCTIONAL_GOAL_MCP, skills_dir)

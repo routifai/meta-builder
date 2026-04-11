@@ -79,7 +79,10 @@ def _extract_domains(
 
     if build_target:
         slug = _BUILD_TARGET_TO_DOMAIN.get(build_target.lower())
-        if slug and slug not in domains:
+        if not slug:
+            # Unknown build target — use the raw value as a domain slug so it still gets researched
+            slug = build_target.lower().replace(" ", "-")
+        if slug not in domains:
             domains.append(slug)
 
     if deploy_target:
@@ -258,12 +261,14 @@ async def run(
     skills_written: list[str] = []
     all_references: list[str] = []
 
-    for domain in domains:
-        if search_mode == "tavily":
-            result = await _research_tavily(domain, raw_goal, _client)
-        else:
-            result = await _research_builtin(domain, raw_goal, _client)
+    # Research all domains concurrently — each is an independent API call
+    research_fn = _research_tavily if search_mode == "tavily" else _research_builtin
+    domain_results = await asyncio.gather(
+        *[research_fn(domain, raw_goal, _client) for domain in domains]
+    )
 
+    # Write results to the skills store sequentially (filesystem, not thread-safe)
+    for domain, result in zip(domains, domain_results):
         try:
             store.write_new(domain, result["skill_content"])
         except FileExistsError:
