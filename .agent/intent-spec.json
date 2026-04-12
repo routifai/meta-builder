@@ -1,0 +1,15 @@
+{
+  "_comment": "Example intent spec for testing. Fill in your actual goal before running.",
+  "raw_goal": "build an MCP server for Perplexity search and deploy to prod",
+  "build_target": "mcp-server",
+  "integrations": ["perplexity"],
+  "deploy_target": "fly.io",
+  "llm_provider": "anthropic",
+  "llm_model": "claude-sonnet-4-6",
+  "llm_base_url": null,
+  "risk_tolerance": "stable",
+  "auto_merge_if_ci_green": true,
+  "notification_preference": "async",
+  "run_id": "example-run-001",
+  "created_at": "2026-04-10T00:00:00Z"
+}

@@ -1,0 +1,24 @@
+{
+  "run_id": "",
+  "started_at": "",
+  "nodes": {
+    "prompt_parser":       {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "ambiguity_scorer":    {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "defaults_agent":      {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "researcher":          {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "architect":           {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "coder":               {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "tester":              {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "deployer":            {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "monitor_setup":       {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "signal_collector":    {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "scorer":              {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "router":              {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "log_watcher":         {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "anomaly_classifier":  {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "context_builder":     {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "fix_agent":           {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "validator":           {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""},
+    "skills_updater":      {"status": "pending", "started_at": null, "finished_at": null, "retries": 0, "output_ref": ""}
+  }
+}

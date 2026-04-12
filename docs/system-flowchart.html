@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>meta-builder — System Flowchart</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      padding: 40px 24px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #f0f6fc;
+    }
+    p.subtitle {
+      font-size: 13px;
+      color: #8b949e;
+      margin-bottom: 36px;
+    }
+    .chart-wrap {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 32px;
+      max-width: 1100px;
+      margin: 0 auto 48px;
+    }
+    .chart-wrap h2 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #8b949e;
+      margin-bottom: 20px;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .dot {
+      width: 12px; height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div style="max-width:1100px;margin:0 auto">
+    <h1>meta-builder</h1>
+    <p class="subtitle">One sentence → deployed, monitored application. System flowchart.</p>
+  </div>
+
+  <!-- ── Main pipeline ─────────────────────────────────────────────────── -->
+  <div class="chart-wrap">
+    <h2>Full Pipeline</h2>
+    <div class="mermaid">
+flowchart TD
+    USER(["👤 User goal\n\"build an MCP server for Perplexity\nand deploy to fly.io\""])
+
+    subgraph INTENT["🔵  Block 1 — Intent"]
+        PP["prompt_parser\nextract build_target, deploy_target,\nintegrations from raw text"]
+        AS["ambiguity_scorer\nscore unknown fields\nflag must_ask"]
+        DA["defaults_agent\nfill defaults · assign run_id\n→ IntentSpec"]
+        PP --> AS --> DA
+    end
+
+    subgraph MESH["🟢  Block 2 — Mesh (concurrent)"]
+        direction LR
+        RES["researcher\nTavily / built-in search\nwrites skill docs → SkillsStore.write_new()"]
+        ARCH["architect\nforced tool_choice\n→ file_tree · interfaces · tech_choices"]
+    end
+
+    subgraph PLANNER_BLOCK["🔷  Block 2b — Planner"]
+        PLN["planner\nforced tool_choice\nper-file blueprint:\nimports · classes · signatures · notes\n→ PlanSpec"]
+    end
+
+    subgraph SANDBOX_ZONE["📦  Sandbox — runs/{run_id}/workspace/  (agents write ONLY here)"]
+        subgraph CODER_LOOP["🟡  Coder inner loop (max 5 rounds)"]
+            COD["coder ReAct loop\nwrite_file · read_file\nrun_lint · run_type_check\nrun_tests · fill_knowledge_gap\nall paths enforced by SandboxManager"]
+            STOP{coder_should_stop?\nlint ✓  types ✓  tests ✓}
+            COD --> STOP
+            STOP -- "errors remain\nround N+1" --> COD
+        end
+
+        subgraph VALIDATE_LOOP["🔶  Plan validation (max 2 fix rounds)"]
+            VAL["plan_validator\nAST parse each .py file\ncheck all planned symbols exist"]
+            VFAIL{violations?}
+            REVISE["re-run planner\nwith revision_note\n(if fix rounds >= 2)"]
+            VAL --> VFAIL
+            VFAIL -- "yes: push violations\nto coder" --> REVISE
+            REVISE --> COD
+        end
+
+        subgraph TESTER_LOOP["🟠  Tester (max 3 rounds)"]
+            TST["tester\nwrite tests → workspace/tests/\nthen run_tests → artifacts/test-results.json"]
+            TFAIL{test failures?}
+            TST --> TFAIL
+            TFAIL -- "yes: reset coder\nand retry" --> COD
+        end
+
+        subgraph DEPLOY_LOOP["🔴  Deployer (max 2 retries)"]
+            DEP["deployer\nDockerfile + workflow in workspace/\ndocker build context = workspace/\nfly deploy · smoke tests"]
+            DFAIL{smoke tests\npassed?}
+            DEP --> DFAIL
+            DFAIL -- "no: reset coder\nfix code" --> COD
+        end
+    end
+
+    subgraph MONITOR["🟣  Block 3 — Monitor setup"]
+        MON["monitor_setup\nconfigure health checks\nalerts · dashboards"]
+    end
+
+    subgraph ROUTER["⚪  Block 4 — Router"]
+        SIG["signal_collector\ngather deploy + runtime signals"]
+        SCO["scorer\nquality · risk · coverage score"]
+        ROU["router\ndecide: ship · retry · escalate"]
+        SIG --> SCO --> ROU
+    end
+
+    OUT(["✅ Deployed + monitored app\nor escalation decision"])
+
+    USER --> PP
+    DA --> RES & ARCH
+    RES & ARCH --> PLN
+    PLN --> COD
+    STOP -- "clean pass" --> VAL
+    VFAIL -- "no violations" --> TST
+    TFAIL -- "no failures" --> DEP
+    DFAIL -- "yes" --> MON
+    MON --> SIG
+    ROU --> OUT
+
+    style USER fill:#1f2937,stroke:#4b5563,color:#f9fafb
+    style OUT  fill:#14532d,stroke:#16a34a,color:#f0fdf4
+    style INTENT fill:#0f172a,stroke:#1e40af,color:#e0f2fe
+    style MESH   fill:#0f2d0f,stroke:#166534,color:#dcfce7
+    style PLANNER_BLOCK fill:#0f1f3d,stroke:#1d4ed8,color:#bfdbfe
+    style SANDBOX_ZONE fill:#0a0a0a,stroke:#854d0e,color:#fef9c3
+    style CODER_LOOP fill:#2d2000,stroke:#a16207,color:#fef3c7
+    style VALIDATE_LOOP fill:#1a1200,stroke:#d97706,color:#fde68a
+    style TESTER_LOOP fill:#2d1500,stroke:#c2410c,color:#ffedd5
+    style DEPLOY_LOOP fill:#2d0f0f,stroke:#b91c1c,color:#fee2e2
+    style MONITOR fill:#1a0f2d,stroke:#7c3aed,color:#ede9fe
+    style ROUTER  fill:#1f1f1f,stroke:#4b5563,color:#f9fafb
+    </div>
+  </div>
+
+  <!-- ── Sandbox Architecture ───────────────────────────────────────────── -->
+  <div class="chart-wrap">
+    <h2>Sandbox — per-run isolation &amp; path safety</h2>
+    <div class="mermaid">
+flowchart LR
+    RC[("RunContext\nrun_id: abc-123\nsandbox_root\nworkspace_path\nartifacts_path\n.sandbox → SandboxManager")]
+
+    subgraph DIRS["runs/{run_id}/ — directory layout"]
+        WS["workspace/\nALL agent-generated code\nsrc/ · tests/ · Dockerfile\n── write-only zone ──"]
+        ART["artifacts/\ntest-results.json\ndeploy logs\nstructured outputs"]
+        LOGS["logs/\nrun-level log files"]
+    end
+
+    subgraph SAFE["SandboxManager.safe_path(path)"]
+        D1{"contains '..'?"}
+        D2["strip leading '/'"]
+        D3["Path.resolve()"]
+        D4{"relative_to(workspace)\nraises ValueError?"}
+        OK["return abs Path\ninside workspace/"]
+        BAD["raise SandboxViolation\n→ surfaced as tool error\nto LLM"]
+
+        D1 -- "yes" --> BAD
+        D1 -- "no"  --> D2 --> D3 --> D4
+        D4 -- "yes" --> BAD
+        D4 -- "no"  --> OK
+    end
+
+    subgraph POLICY["Access policy"]
+        WR["WRITE\nonly via safe_path\nonly to workspace/"]
+        RD["READ\nunrestricted from workspace/\nread-only fallback: skills/"]
+        SK["SkillsStore\nread: open\nwrite: .write_new() or .update() only\nno direct .md file writes"]
+    end
+
+    RC --> DIRS
+    RC --> SAFE
+    OK --> WS
+    ART -. "pytest JSON report\nsaved here" .-> ART
+
+    style RC   fill:#1e293b,stroke:#334155,color:#e2e8f0
+    style DIRS fill:#0a0a0a,stroke:#854d0e,color:#fef9c3
+    style WS   fill:#14532d,stroke:#16a34a,color:#f0fdf4
+    style ART  fill:#1e293b,stroke:#334155,color:#e2e8f0
+    style LOGS fill:#1e293b,stroke:#334155,color:#e2e8f0
+    style SAFE fill:#2d1f00,stroke:#d97706,color:#fde68a
+    style OK   fill:#14532d,stroke:#16a34a,color:#f0fdf4
+    style BAD  fill:#4c0519,stroke:#be123c,color:#ffe4e6
+    style POLICY fill:#0f172a,stroke:#1e40af,color:#bfdbfe
+    style WR   fill:#2d0f0f,stroke:#b91c1c,color:#fee2e2
+    style RD   fill:#0f2d0f,stroke:#166534,color:#dcfce7
+    style SK   fill:#1a0f2d,stroke:#7c3aed,color:#ede9fe
+    </div>
+  </div>
+
+  <!-- ── Planner detail ───────────────────────────────────────────────── -->
+  <div class="chart-wrap">
+    <h2>Planner — per-file blueprint</h2>
+    <div class="mermaid">
+flowchart LR
+    IN_ARCH[("ArchitectureSpec\nfile_tree\nmodule_interfaces\ntech_choices")]
+    IN_INT[("IntentSpec\nraw_goal\nbuild_target\ndeploy_target")]
+
+    subgraph PLAN["Planner — forced tool_choice"]
+        PROMPT["_build_prompt\nassemble file list +\nmodule contracts + tech stack"]
+        LLM2["claude-haiku\ntool_choice: define_file_plans"]
+        EXTRACT["extract PlanSpec\nfrom tool_use block"]
+        PROMPT --> LLM2 --> EXTRACT
+    end
+
+    subgraph OUTPUT["PlanSpec (per file)"]
+        FP["file_plans: dict\n────────────────\npath → {\n  description\n  imports: []\n  constants: []\n  classes: [{name, bases,\n    docstring, methods}]\n  functions: [{name,\n    signature, docstring}]\n  notes\n}"]
+        EP["entry_point\n(which file to run)"]
+        TS["test_strategy\n(how to structure tests)"]
+    end
+
+    IN_ARCH --> PROMPT
+    IN_INT  --> PROMPT
+    EXTRACT --> FP & EP & TS
+
+    style IN_ARCH fill:#1e293b,stroke:#334155,color:#e2e8f0
+    style IN_INT  fill:#1e293b,stroke:#334155,color:#e2e8f0
+    style PLAN    fill:#0f1f3d,stroke:#1d4ed8,color:#bfdbfe
+    style OUTPUT  fill:#0f2d0f,stroke:#166534,color:#dcfce7
+    </div>
+  </div>
+
+  <!-- ── Plan validator detail ─────────────────────────────────────────── -->
+  <div class="chart-wrap">
+    <h2>Plan Validator — AST enforcement loop</h2>
+    <div class="mermaid">
+flowchart TD
+    CTX2[("RunContext\nplan_spec\nfile_contents")]
+
+    subgraph VALFLOW["plan_validator.validate(plan_spec, file_contents)"]
+        direction LR
+        FCHECK["file presence check\nfor each path in file_plans:\n  path in file_contents?"]
+        ACHECK["AST symbol check (.py only)\n  ast.parse(source)\n  top-level functions present?\n  classes + methods present?"]
+        VRESULT["ValidationResult\n  passed: bool\n  missing_files: []\n  signature_mismatches: []\n  violations: []  <- human-readable"]
+        FCHECK --> ACHECK --> VRESULT
+    end
+
+    DECISION{passed?}
+    CODERFIX["reset coder\nctx.plan_violations -> error msg\n-> coder fix pass"]
+    REVCHECK{fix_rounds >= 2\n& violations persist?}
+    REPLANNER["re-run planner\nwith build_revision_note\nctx.planner_revision += 1"]
+    PROCEED["proceed to Tester"]
+
+    CTX2 --> FCHECK
+    VRESULT --> DECISION
+    DECISION -- "yes" --> PROCEED
+    DECISION -- "no" --> CODERFIX
+    CODERFIX --> REVCHECK
+    REVCHECK -- "yes" --> REPLANNER --> CODERFIX
+    REVCHECK -- "no" --> VRESULT
+
+    style CTX2 fill:#1e293b,stroke:#334155,color:#e2e8f0
+    style VALFLOW fill:#1a1200,stroke:#d97706,color:#fde68a
+    style PROCEED fill:#14532d,stroke:#16a34a,color:#f0fdf4
+    style REPLANNER fill:#0f1f3d,stroke:#1d4ed8,color:#bfdbfe
+    </div>
+  </div>
+
+  <!-- ── Coder ReAct loop detail ────────────────────────────────────────── -->
+  <div class="chart-wrap">
+    <h2>Coder ReAct Loop — detail</h2>
+    <div class="mermaid">
+flowchart LR
+    CTX[("RunContext\nplan_spec\nlint_errors\ntype_errors\ntest_failures\nfile_contents\n.sandbox → SandboxManager")]
+
+    subgraph REACT["Coder — one round (run(ctx))"]
+        MSG["build_messages(ctx)\n<- error context from prior round"]
+        SYS["_build_system(ctx)\n<- plan_spec: signatures · imports · notes\n<- arch: file_tree · tech_choices\n<- SANDBOX RULES injected"]
+        LLM["claude-opus-4-6\nstop_reason = tool_use"]
+        DISPATCH["_dispatch(tool_name, input, ctx)"]
+        LOOP{stop_reason\n= end_turn?}
+
+        MSG --> LLM
+        SYS --> LLM
+        LLM --> LOOP
+        LOOP -- "no: tool_use" --> DISPATCH
+        DISPATCH --> LLM
+    end
+
+    subgraph TOOLS["Available tools (all sandbox-enforced)"]
+        WF["write_file\n→ safe_path() → workspace/\nSandboxViolation on escape\n→ ctx.file_contents\n   ctx.files_written"]
+        RF["read_file\n1. ctx.file_contents cache\n2. workspace/ (safe_path)\n3. skills/ read-only fallback"]
+        RL["run_lint (ruff)\nfiles via safe_path\n→ ctx.lint_errors"]
+        RT["run_type_check (mypy)\nfiles via safe_path\n→ ctx.type_errors"]
+        RU["run_tests (pytest)\ncwd = workspace/\nreport → artifacts/\n→ ctx.test_failures"]
+        KG["fill_knowledge_gap\nSkillsStore fast path\nor researcher slow path"]
+    end
+
+    subgraph VIOLATION["SandboxViolation handling"]
+        VIO["path escapes workspace/\nor contains '..'\n→ tool returns error string\n→ LLM corrects path and retries"]
+    end
+
+    CTX --> MSG & SYS
+    DISPATCH --> WF & RF & RL & RT & RU & KG
+    WF & RL & RT & RU --> CTX
+    LOOP -- "yes: end_turn" --> CTX
+    WF -. "rejected path" .-> VIO
+
+    style CTX fill:#1e293b,stroke:#334155,color:#e2e8f0
+    style REACT fill:#292000,stroke:#a16207,color:#fef3c7
+    style TOOLS fill:#0f2d0f,stroke:#166534,color:#dcfce7
+    style WF    fill:#14532d,stroke:#16a34a,color:#f0fdf4
+    style VIO   fill:#4c0519,stroke:#be123c,color:#ffe4e6
+    style VIOLATION fill:#2d0f1a,stroke:#be123c,color:#ffe4e6
+    </div>
+  </div>
+
+  <!-- ── Knowledge gap detail ───────────────────────────────────────────── -->
+  <div class="chart-wrap">
+    <h2>fill_knowledge_gap — pivot-back flow</h2>
+    <div class="mermaid">
+flowchart TD
+    CALL["coder calls fill_knowledge_gap\ndomain='fastmcp'\nquestion='how to register tools'"]
+    CHECK{SkillsStore\nhas 'fastmcp.md'?}
+    FAST["fast path\nSkillsStore.read(slug)\n~0ms"]
+    SLOW["slow path\n_research_tavily or _research_builtin\n~5s · single domain"]
+    WRITE["SkillsStore.write_new(slug, content)\ncontrolled API — validates name\nrace-safe: FileExistsError -> read existing"]
+    RETURN["return skill content\nto coder tool loop"]
+
+    CALL --> CHECK
+    CHECK -- "yes" --> FAST --> RETURN
+    CHECK -- "no" --> SLOW --> WRITE --> RETURN
+
+    style FAST  fill:#0f2d0f,stroke:#166534,color:#dcfce7
+    style SLOW  fill:#2d2000,stroke:#a16207,color:#fef3c7
+    style WRITE fill:#1a0f2d,stroke:#7c3aed,color:#ede9fe
+    </div>
+  </div>
+
+  <!-- ── Legend ─────────────────────────────────────────────────────────── -->
+  <div class="legend">
+    <div class="legend-item"><div class="dot" style="background:#1e40af"></div> Block 1 — Intent</div>
+    <div class="legend-item"><div class="dot" style="background:#166534"></div> Block 2 — Mesh (research + architecture)</div>
+    <div class="legend-item"><div class="dot" style="background:#1d4ed8"></div> Block 2b — Planner (per-file blueprint)</div>
+    <div class="legend-item"><div class="dot" style="background:#d97706"></div> Block 2c — Plan Validator (AST enforcement)</div>
+    <div class="legend-item"><div class="dot" style="background:#a16207"></div> Block 2 — Coder inner loop</div>
+    <div class="legend-item"><div class="dot" style="background:#c2410c"></div> Block 2 — Tester</div>
+    <div class="legend-item"><div class="dot" style="background:#b91c1c"></div> Block 2 — Deployer</div>
+    <div class="legend-item"><div class="dot" style="background:#7c3aed"></div> Block 3 — Monitor setup</div>
+    <div class="legend-item"><div class="dot" style="background:#4b5563"></div> Block 4 — Router</div>
+    <div class="legend-item"><div class="dot" style="background:#334155"></div> RunContext (shared state)</div>
+    <div class="legend-item"><div class="dot" style="background:#854d0e"></div> Sandbox boundary (workspace/)</div>
+    <div class="legend-item"><div class="dot" style="background:#be123c"></div> SandboxViolation (rejected path)</div>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        background: '#161b22',
+        primaryColor: '#1f2937',
+        primaryTextColor: '#e6edf3',
+        primaryBorderColor: '#30363d',
+        lineColor: '#6e7681',
+        secondaryColor: '#21262d',
+        tertiaryColor: '#161b22',
+      },
+      flowchart: { curve: 'basis', padding: 20 },
+    });
+  </script>
+</body>
+</html>

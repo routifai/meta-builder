@@ -1,0 +1,32 @@
+name: Agent Fix Loop
+
+on:
+  repository_dispatch:
+    types: [anomaly_detected]
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run fix agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_TRACING: "true"
+          RUN_ID: ${{ github.event.client_payload.run_id }}
+          ANOMALY_TYPE: ${{ github.event.client_payload.anomaly_type }}
+          ANOMALY_SERVICE: ${{ github.event.client_payload.service }}
+        run: python -m agent.monitor.fix_agent

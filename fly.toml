@@ -1,0 +1,38 @@
+app = "meta-builder-monitor"
+primary_region = "ord"
+
+[build]
+  dockerfile = "docker/Dockerfile.agent"
+
+[env]
+  LOG_LEVEL = "info"
+
+[processes]
+  log_watcher        = "python -m agent.monitor.log_watcher"
+  anomaly_classifier = "python -m agent.monitor.anomaly_classifier"
+  fix_agent          = "python -m agent.monitor.fix_agent"
+  validator          = "python -m agent.monitor.validator"
+  skills_updater     = "python -m agent.monitor.skills_updater"
+  health             = "python -m agent.monitor.health_server"
+
+[[restart]]
+  policy   = "always"
+  retries  = 10
+  processes = ["log_watcher", "anomaly_classifier", "fix_agent", "validator", "skills_updater"]
+
+[[http_service]]
+  internal_port = 8080
+  processes     = ["health"]
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval     = "30s"
+    method       = "GET"
+    path         = "/health"
+    timeout      = "5s"
+
+[[mounts]]
+  source           = "skills_volume"
+  destination      = "/app/skills"
+  processes        = ["log_watcher", "anomaly_classifier", "fix_agent", "validator", "skills_updater"]
+  initial_size     = "5gb"
+  snapshot_retention = 7

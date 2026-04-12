@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir -e .
+
+COPY agent/ ./agent/
+COPY mcp/ ./mcp/
+
+# skills/ is seeded here but overridden at runtime by the Fly.io persistent volume
+COPY skills/ ./skills/
+
+CMD ["python", "-m", "agent.monitor.log_watcher"]

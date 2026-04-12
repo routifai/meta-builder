@@ -84,17 +84,66 @@ validator, skills_updater (13 agents)
 
 ---
 
+## Session 4 — 2026-04-11
+
+**Architectural redesign: interconnected feedback loop.**
+
+No more one-shot linear pipeline. Agents now cycle: code → lint → test → fix → repeat.
+
+**New shared infrastructure:**
+
+| File | Purpose |
+|------|---------|
+| `agent/shared/run_context.py` | `RunContext` dataclass — shared mutable state for a full run. In-memory `file_contents`, per-phase error lists, iteration guards (`coder_should_stop()`). |
+| `agent/shared/capabilities.py` | `write_file`, `read_file`, `run_lint`, `run_type_check`, `run_tests`, `run_command` + Anthropic tool definitions. Single implementation callable by both orchestrator and agent ReAct loops. |
+
+**Rewrites:**
+
+| Agent | Change | Tests |
+|-------|--------|-------|
+| `orchestrator.py` | Python execution loop: phases 2–7, coder inner loop, tester retry, deployer retry | — |
+| `coder.py` | Full ReAct loop: `write_file`→`run_lint`→`run_tests`→`fill_knowledge_gap` in cycle | 17/17 |
+| `tester.py` | Dual-role: writes test suite (LLM loop) then runs it via `capabilities.run_tests` | 9/9 |
+
+**New unit tests:**
+
+| File | Tests |
+|------|-------|
+| `tests/unit/shared/test_run_context.py` | 16/16 |
+| `tests/unit/shared/test_capabilities.py` | 28/28 |
+| `tests/unit/mesh/test_coder.py` | 17/17 |
+| `tests/unit/mesh/test_tester.py` | 9/9 |
+
+**Total unit suite: 147 passed, 36 skipped (pre-existing), 0 failures.**
+
+**Feedback loop design:**
+```
+while not ctx.coder_should_stop():
+    ctx.coder_rounds += 1
+    await coder.run(ctx)        # coder sees lint_errors + test_failures from prior round
+
+await tester.run(ctx)           # writes tests + runs them
+if ctx.test_failures:
+    reset coder, retry
+
+await deployer.run(ctx)
+if not ctx.smoke_tests_passed:
+    reset coder, retry
+```
+
+---
+
 ## Running counts
 
 | Category | Done | Remaining |
 |----------|------|-----------|
 | Intent agents | 3/3 | 0 |
-| Mesh agents | 2/6 | 4 |
+| Mesh agents | 4/6 | 2 (deployer, monitor_setup) |
 | Router agents | 0/3 | 3 |
 | Monitor agents | 0/6 | 6 |
 | MCP servers | 0/3 | 3 |
-| Orchestrator | 0/1 | 1 |
-| **Total** | **5/22** | **17** |
+| Orchestrator | 1/1 | 0 |
+| **Total** | **8/22** | **14** |
 
 ---
 
