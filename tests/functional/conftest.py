@@ -26,11 +26,12 @@ FUNCTIONAL_GOAL_MCP = "build an MCP server for Perplexity search and deploy to f
 
 
 def _run_pipeline(goal: str, skills_dir: Path) -> dict:
-    """Shared pipeline execution — returns the standard result dict."""
+    """Shared pipeline execution — intent block + researcher + architect."""
     from agent.intent.prompt_parser import parse_prompt
     from agent.intent.ambiguity_scorer import score_unknowns
     from agent.intent.defaults_agent import fill_defaults, HumanInputRequired
     from agent.mesh.researcher import run as researcher_run
+    from agent.mesh.architect import run as architect_run
 
     result: dict = {
         "goal": goal,
@@ -39,11 +40,12 @@ def _run_pipeline(goal: str, skills_dir: Path) -> dict:
         "spec": None,
         "human_input_required": [],
         "research": None,
+        "architecture": None,
         "skills_dir": skills_dir,
         "error": None,
     }
 
-    try:
+    async def _async_pipeline():
         result["parsed"] = parse_prompt(goal)
         result["scored"] = score_unknowns(result["parsed"])
 
@@ -51,12 +53,18 @@ def _run_pipeline(goal: str, skills_dir: Path) -> dict:
             result["spec"] = fill_defaults(result["scored"], result["parsed"])
         except HumanInputRequired as exc:
             result["human_input_required"] = exc.fields
-            return result
+            return
 
-        result["research"] = asyncio.run(
-            researcher_run(result["spec"], skills_dir=str(skills_dir))
+        # Researcher and architect run concurrently — same as production mesh block
+        research, arch = await asyncio.gather(
+            researcher_run(result["spec"], skills_dir=str(skills_dir)),
+            architect_run(result["spec"], {}, skills_dir=str(skills_dir)),
         )
+        result["research"] = research
+        result["architecture"] = arch
 
+    try:
+        asyncio.run(_async_pipeline())
     except Exception as exc:
         result["error"] = exc
         raise
