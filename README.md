@@ -8,7 +8,7 @@ A fully autonomous software delivery system. Write a one-sentence goal. The syst
 
 ## System overview
 
-<img src="docs/pipeline.svg" alt="meta-builder pipeline" width="960"/>
+![meta-builder pipeline](docs/pipeline.png)
 
 ---
 
