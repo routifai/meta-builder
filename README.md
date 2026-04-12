@@ -8,56 +8,7 @@ A fully autonomous software delivery system. Write a one-sentence goal. The syst
 
 ## System overview
 
-```mermaid
-flowchart TD
-    USER(["👤  One-sentence goal\ne.g. 'build an MCP server and deploy to fly.io'"])
-
-    subgraph B1["Block 1 — Intent"]
-        INT["prompt_parser  →  ambiguity_scorer  →  defaults_agent\nextract build target · deploy target · integrations\nassign run_id  →  IntentSpec"]
-    end
-
-    subgraph B2["Block 2 — Mesh  (concurrent)"]
-        direction LR
-        RES["researcher\nTavily search\nwrites skill docs\n→ SkillsStore"]
-        ARCH["architect\nfile tree · module interfaces\ntech choices  →  ArchitectureSpec"]
-    end
-
-    PLN["planner\nper-file blueprint: imports · classes · signatures\n→ PlanSpec"]
-
-    subgraph SB["📦  Sandbox   runs/{run_id}/workspace/\nall generated code lives here — main repo is read-only"]
-        direction LR
-        COD["coder\nReAct loop  ×5\nwrite · lint · typecheck · test"]
-        TST["tester\nwrite tests → workspace/tests/\nrun pytest → artifacts/"]
-        DEP["deployer\nDockerfile + workflow\ndocker build context = workspace/"]
-        COD --> TST --> DEP
-    end
-
-    subgraph B3["Block 3 — Monitor"]
-        MON["health checks · alerts · dashboards\nlog_watcher  →  fix_agent  →  skills_updater"]
-    end
-
-    subgraph B4["Block 4 — Router"]
-        ROU["score CI signals\nship · retry · escalate"]
-    end
-
-    OUT(["✅  Deployed + monitored app"])
-
-    USER --> INT
-    INT --> RES & ARCH
-    RES & ARCH --> PLN
-    PLN --> COD
-    DEP --> MON
-    MON --> ROU
-    ROU --> OUT
-
-    style USER fill:#1f2937,stroke:#374151,color:#f9fafb
-    style OUT  fill:#14532d,stroke:#16a34a,color:#f0fdf4
-    style B1   fill:#0f172a,stroke:#1e40af,color:#bfdbfe
-    style B2   fill:#0f2d0f,stroke:#166534,color:#dcfce7
-    style SB   fill:#1a1200,stroke:#854d0e,color:#fef9c3
-    style B3   fill:#1a0f2d,stroke:#7c3aed,color:#ede9fe
-    style B4   fill:#1f1f1f,stroke:#374151,color:#f9fafb
-```
+<img src="docs/pipeline.svg" alt="meta-builder pipeline" width="960"/>
 
 ---
 
