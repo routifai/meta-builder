@@ -96,6 +96,24 @@ validator, skills_updater (13 agents)
 | Orchestrator | 0/1 | 1 |
 | **Total** | **5/22** | **17** |
 
+---
+
+## Session 3 addendum — pivot-back design + smoke fix
+
+**Problem found:** smoke.py was stale (stopped after researcher, architect not wired in). No test had ever run all 5 built agents in a real chain with data actually flowing between them.
+
+**Full 5-agent smoke run confirmed working.** New `scripts/smoke.py` chains all implemented stages, detects stubs gracefully, prints a per-stage summary at the end.
+
+**Pivot-back capability added:** `agent/shared/knowledge.py`
+- `fill_knowledge_gap(domain, question, intent_spec, skills_dir)` — checks SkillsStore first (fast path), researches on-demand if missing (slow path ~5s)
+- `get_knowledge_tool_definition()` — Anthropic tool schema; coder passes this in its `tools=` list
+- Race condition safe (concurrent coroutines can both hit the slow path — second write is caught, existing file returned)
+- 8/8 unit tests green, no API calls needed (all mocked)
+
+**Design decision:** Coder will get `fill_knowledge_gap` as a callable tool in its Anthropic message loop. When it needs to know the FastMCP tool registration API, it calls the tool, gets the skill content, then writes the code. No orchestrator involvement.
+
+---
+
 ## How to run
 
 ```bash
