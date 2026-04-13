@@ -89,6 +89,10 @@ class RunContext:
     score_result: dict | None = None
     router_decision: dict | None = None
 
+    # ── Cancellation ──────────────────────────────────────────────────────
+    cancelled: bool = False
+    cancel_reason: str = ""
+
     # ── Timing + iteration guards ─────────────────────────────────────────
     started_at: float = field(default_factory=time.monotonic)
     phase_timestamps: dict[str, float] = field(default_factory=dict)
@@ -117,6 +121,12 @@ class RunContext:
             and not self.type_errors
             and not self.test_failures
         )
+
+    def cancel(self, reason: str = "user requested stop") -> None:
+        """Signal all agents to stop after their current operation completes."""
+        self.cancelled = True
+        self.cancel_reason = reason
+        self.mark_phase("cancelled")
 
     def plan_valid(self) -> bool:
         """True when no plan violations remain (or no plan was generated)."""

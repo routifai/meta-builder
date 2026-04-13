@@ -167,11 +167,31 @@ async def main(goal: str) -> None:
 
     t_orch = time.perf_counter()
 
+    from agent.orchestrator import run as orchestrator_run
+
+    # Run the pipeline as a cancellable asyncio task
+    task = asyncio.create_task(orchestrator_run(spec, output_dir=output_dir))
+
+    # Ctrl+C → cancel gracefully (finish current LLM call, then stop)
+    loop = asyncio.get_event_loop()
+
+    def _handle_sigint():
+        if not task.done():
+            print(f"\n{YELLOW}⚡ Stop requested — finishing current operation...{RESET}")
+            task.cancel()
+
+    loop.add_signal_handler(__import__("signal").SIGINT, _handle_sigint)
+
+    ctx = None
     try:
-        from agent.orchestrator import run as orchestrator_run
-        ctx = await orchestrator_run(spec, output_dir=output_dir)
+        ctx = await task
+    except asyncio.CancelledError:
+        print(_warn("Pipeline cancelled by user."))
+        # ctx may be partially populated — try to get it from the task
+        if task.cancelled():
+            _print_ctx_summary_minimal(spec, output_dir)
+            return
     except NotImplementedError as exc:
-        # Expected when downstream agents are stubs — print what we got so far
         print(_warn(f"Pipeline reached a stub: {exc}"))
         _print_partial_results(exc, output_dir, run_id)
         return
@@ -180,6 +200,8 @@ async def main(goal: str) -> None:
         import traceback
         traceback.print_exc()
         return
+    finally:
+        loop.remove_signal_handler(__import__("signal").SIGINT)
 
     elapsed_orch = _elapsed(t_orch)
     print(_ok(f"Orchestrator returned in {elapsed_orch}"))
@@ -327,6 +349,24 @@ def _print_partial_results(exc: NotImplementedError, output_dir: str, run_id: st
             for f in files:
                 if f.is_file():
                     print(f"    {f.relative_to(workspace)}")
+
+
+def _print_ctx_summary_minimal(spec: dict, output_dir: str) -> None:
+    """Print what we know after a cancellation — no ctx object available."""
+    _section("CANCELLED — PARTIAL RESULTS")
+    print(f"  Run ID    : {spec.get('run_id', '?')}")
+    print(f"  Output dir: {output_dir}/")
+    workspace = Path(output_dir) / "workspace"
+    if workspace.exists():
+        files = [f for f in workspace.rglob("*") if f.is_file()]
+        if files:
+            print(f"\n  Files written so far ({len(files)}):")
+            for f in files:
+                print(f"    {f.relative_to(workspace)}")
+        else:
+            print("  No files written yet.")
+    print(f"\n  Tip: re-run with the same goal to continue from scratch,")
+    print(f"  or inspect {output_dir}/workspace/ to see partial output.")
 
 
 if __name__ == "__main__":

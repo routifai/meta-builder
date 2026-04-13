@@ -46,6 +46,12 @@ MAX_CRITIC_ROUNDS = 2
 MAX_PLAN_FIX_ROUNDS = 2
 
 
+def _check(ctx: RunContext) -> None:
+    """Raise asyncio.CancelledError if ctx.cancel() was called."""
+    if ctx.cancelled:
+        raise asyncio.CancelledError(f"Pipeline cancelled: {ctx.cancel_reason}")
+
+
 async def run(
     intent_spec: dict,
     *,
@@ -56,6 +62,7 @@ async def run(
     Execute the full pipeline for a validated intent spec.
 
     Returns RunContext — check ctx.critic_*_result["decision"] for blocks.
+    Raises asyncio.CancelledError if ctx.cancel() is called mid-run.
     Raises NotImplementedError for agents not yet implemented (stubs).
     """
     ctx = RunContext(
@@ -85,6 +92,7 @@ async def run(
         ctx.intent_spec = intent_spec
 
     ctx.mark_phase("feasibility_done")
+    _check(ctx)
 
     # ── Phase 1c: Requirement closure ─────────────────────────────────────
     ctx.mark_phase("closure_start")
@@ -104,6 +112,7 @@ async def run(
         ctx.intent_spec = intent_spec
 
     ctx.mark_phase("closure_done")
+    _check(ctx)
 
     # ── Phase 2: Mesh — researcher ‖ architect (concurrent) ───────────────
     ctx.mark_phase("mesh_start")
@@ -116,6 +125,7 @@ async def run(
             architect_run(intent_spec, {}, skills_dir=skills_dir),
         )
     ctx.mark_phase("mesh_done")
+    _check(ctx)
 
     # ── Phase 2b: Planner ─────────────────────────────────────────────────
     ctx.mark_phase("planner_start")
@@ -124,6 +134,7 @@ async def run(
     with telemetry.span("planner"):
         ctx.plan_spec = await planner_run(intent_spec, ctx.architecture_spec)
     ctx.mark_phase("planner_done")
+    _check(ctx)
 
     # ── Phase 2c: Critic — plan review ────────────────────────────────────
     ctx.mark_phase("critic_plan_start")
@@ -154,6 +165,7 @@ async def run(
             )
 
     ctx.mark_phase("critic_plan_done")
+    _check(ctx)
 
     # ── Phase 3: Coder inner loop ──────────────────────────────────────────
     ctx.mark_phase("coder_start")
@@ -167,6 +179,7 @@ async def run(
             await coder_run(ctx)
 
     ctx.mark_phase("coder_done")
+    _check(ctx)
 
     # ── Phase 3b: Plan validation ──────────────────────────────────────────
     ctx.mark_phase("plan_validate_start")
@@ -194,6 +207,7 @@ async def run(
             ctx.plan_violations = validation["violations"]
 
     ctx.mark_phase("plan_validate_done")
+    _check(ctx)
 
     # ── Phase 3c: Critic — code review ────────────────────────────────────
     ctx.mark_phase("critic_code_start")
