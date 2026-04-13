@@ -11,7 +11,7 @@ from agent.shared.run_context import RunContext
 
 
 def make_ctx(tmp_path, **kwargs) -> RunContext:
-    return RunContext(
+    ctx = RunContext(
         run_id="tester-test",
         intent_spec={
             "raw_goal": "build an MCP server",
@@ -29,6 +29,8 @@ def make_ctx(tmp_path, **kwargs) -> RunContext:
         },
         **kwargs,
     )
+    ctx.sandbox.create()  # create workspace/ artifacts/ logs/
+    return ctx
 
 
 def make_end_turn_response() -> MagicMock:
@@ -83,10 +85,19 @@ class TestBuildPrompt:
 
 
 class TestTesterRun:
+    def _write_report(self, tmp_path: object, report: dict) -> None:
+        """Write report to artifacts/ where run_tests now saves it."""
+        from pathlib import Path
+        artifacts = Path(str(tmp_path)) / "artifacts"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        (artifacts / "test-results.json").write_text(json.dumps(report))
+
     @pytest.mark.asyncio
     async def test_end_turn_no_test_files_written(self, tmp_path):
         """LLM returns end_turn immediately — no files written, run_tests still called."""
         ctx = make_ctx(tmp_path)
+        report = {"summary": {"total": 0, "passed": 0, "failed": 0}, "tests": []}
+        self._write_report(tmp_path, report)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=make_end_turn_response())
@@ -96,15 +107,7 @@ class TestTesterRun:
         fake_proc.stdout = ""
         fake_proc.stderr = ""
 
-        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc), \
-             patch("agent.shared.capabilities.tempfile.TemporaryDirectory") as mock_tmp:
-            real_tmp = tmp_path / "pt"
-            real_tmp.mkdir()
-            report = {"summary": {"total": 0, "passed": 0, "failed": 0}, "tests": []}
-            (real_tmp / "report.json").write_text(json.dumps(report))
-            mock_tmp.return_value.__enter__ = MagicMock(return_value=str(real_tmp))
-            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-
+        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc):
             await run(ctx, client=mock_client)
 
         mock_client.messages.create.assert_called_once()
@@ -114,7 +117,8 @@ class TestTesterRun:
         """LLM writes a test file via write_file tool."""
         ctx = make_ctx(tmp_path)
         ctx.files_written = ["src/server.py"]
-        (tmp_path / "src").mkdir()
+        report = {"summary": {"total": 1, "passed": 1, "failed": 0}, "tests": []}
+        self._write_report(tmp_path, report)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(
@@ -132,15 +136,7 @@ class TestTesterRun:
         fake_proc.stdout = ""
         fake_proc.stderr = ""
 
-        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc), \
-             patch("agent.shared.capabilities.tempfile.TemporaryDirectory") as mock_tmp:
-            real_tmp = tmp_path / "pt2"
-            real_tmp.mkdir()
-            report = {"summary": {"total": 1, "passed": 1, "failed": 0}, "tests": []}
-            (real_tmp / "report.json").write_text(json.dumps(report))
-            mock_tmp.return_value.__enter__ = MagicMock(return_value=str(real_tmp))
-            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-
+        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc):
             await run(ctx, client=mock_client)
 
         assert "tests/test_server.py" in ctx.tests_written
@@ -149,10 +145,6 @@ class TestTesterRun:
     async def test_test_failures_populate_context(self, tmp_path):
         """After tester runs, ctx.test_failures reflects what pytest found."""
         ctx = make_ctx(tmp_path)
-
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=make_end_turn_response())
-
         failure_report = {
             "summary": {"total": 2, "passed": 1, "failed": 1},
             "tests": [
@@ -161,20 +153,17 @@ class TestTesterRun:
                 {"nodeid": "test_ok", "outcome": "passed", "call": {}},
             ],
         }
+        self._write_report(tmp_path, failure_report)
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=make_end_turn_response())
 
         fake_proc = MagicMock()
         fake_proc.returncode = 1
         fake_proc.stdout = ""
         fake_proc.stderr = ""
 
-        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc), \
-             patch("agent.shared.capabilities.tempfile.TemporaryDirectory") as mock_tmp:
-            real_tmp = tmp_path / "pt3"
-            real_tmp.mkdir()
-            (real_tmp / "report.json").write_text(json.dumps(failure_report))
-            mock_tmp.return_value.__enter__ = MagicMock(return_value=str(real_tmp))
-            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-
+        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc):
             await run(ctx, client=mock_client)
 
         assert len(ctx.test_failures) == 1
@@ -186,6 +175,8 @@ class TestTesterRun:
     async def test_no_duplicate_test_files_in_written(self, tmp_path):
         """Same test file path written twice — only appears once in tests_written."""
         ctx = make_ctx(tmp_path)
+        report = {"summary": {"total": 0, "passed": 0, "failed": 0}, "tests": []}
+        self._write_report(tmp_path, report)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(
@@ -201,16 +192,7 @@ class TestTesterRun:
         fake_proc.stdout = ""
         fake_proc.stderr = ""
 
-        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc), \
-             patch("agent.shared.capabilities.tempfile.TemporaryDirectory") as mock_tmp:
-            real_tmp = tmp_path / "pt4"
-            real_tmp.mkdir()
-            (real_tmp / "report.json").write_text(json.dumps(
-                {"summary": {"total": 0, "passed": 0, "failed": 0}, "tests": []}
-            ))
-            mock_tmp.return_value.__enter__ = MagicMock(return_value=str(real_tmp))
-            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-
+        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc):
             await run(ctx, client=mock_client)
 
         assert ctx.tests_written.count("tests/test_a.py") == 1

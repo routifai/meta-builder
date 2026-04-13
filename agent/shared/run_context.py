@@ -41,12 +41,20 @@ class RunContext:
     skills_dir: str = "skills"
     output_dir: str = ""  # if empty, defaults to runs/{run_id}/
 
+    # ── Phase 1b: Intent validation ──────────────────────────────────────
+    feasibility_result: dict | None = None   # from feasibility_critic
+    closure_result: dict | None = None       # from requirement_closure
+    critic_rounds: int = 0                   # total critic invocations this run
+
     # ── Phase 2: Mesh outputs ─────────────────────────────────────────────
     research_result: dict | None = None
     architecture_spec: dict | None = None
     plan_spec: dict | None = None           # per-file blueprint from Planner
     plan_violations: list[str] = field(default_factory=list)  # from plan_validator
     planner_revision: int = 0               # how many times planner was re-run
+    critic_plan_result: dict | None = None  # from critic.evaluate_plan
+    critic_code_result: dict | None = None  # from critic.evaluate_code
+    critic_test_result: dict | None = None  # from critic.evaluate_tests
 
     # ── Phase 3: Coder state ──────────────────────────────────────────────
     files_written: list[str] = field(default_factory=list)

@@ -23,11 +23,13 @@ from agent.shared.run_context import RunContext
 
 
 def make_ctx(tmp_path) -> RunContext:
-    return RunContext(
+    ctx = RunContext(
         run_id="cap-test",
         intent_spec={"raw_goal": "test"},
         output_dir=str(tmp_path),
     )
+    ctx.sandbox.create()  # create workspace/ artifacts/ logs/
+    return ctx
 
 
 # ── write_file ────────────────────────────────────────────────────────────────
@@ -37,7 +39,7 @@ class TestWriteFile:
     def test_writes_file_to_disk(self, tmp_path):
         ctx = make_ctx(tmp_path)
         write_file("src/main.py", "print('hello')", ctx)
-        assert (tmp_path / "src" / "main.py").read_text() == "print('hello')"
+        assert (tmp_path / "workspace" / "src" / "main.py").read_text() == "print('hello')"
 
     def test_records_in_file_contents(self, tmp_path):
         ctx = make_ctx(tmp_path)
@@ -60,12 +62,12 @@ class TestWriteFile:
     def test_creates_parent_dirs(self, tmp_path):
         ctx = make_ctx(tmp_path)
         write_file("a/b/c/deep.py", "content", ctx)
-        assert (tmp_path / "a" / "b" / "c" / "deep.py").exists()
+        assert (tmp_path / "workspace" / "a" / "b" / "c" / "deep.py").exists()
 
     def test_returns_absolute_path(self, tmp_path):
         ctx = make_ctx(tmp_path)
         result = write_file("main.py", "x", ctx)
-        assert result == str(tmp_path / "main.py")
+        assert result == str(tmp_path / "workspace" / "main.py")
 
 
 # ── read_file ─────────────────────────────────────────────────────────────────
@@ -80,13 +82,14 @@ class TestReadFile:
 
     def test_reads_from_disk_when_not_in_cache(self, tmp_path):
         ctx = make_ctx(tmp_path)
-        (tmp_path / "disk.py").write_text("# on disk")
+        # write into workspace/ (where sandbox expects files)
+        (tmp_path / "workspace" / "disk.py").write_text("# on disk")
         result = read_file("disk.py", ctx)
         assert result == "# on disk"
 
     def test_cache_takes_priority_over_disk(self, tmp_path):
         ctx = make_ctx(tmp_path)
-        (tmp_path / "both.py").write_text("# disk version")
+        (tmp_path / "workspace" / "both.py").write_text("# disk version")
         ctx.file_contents["both.py"] = "# cache version"
         result = read_file("both.py", ctx)
         assert result == "# cache version"
@@ -236,25 +239,15 @@ class TestRunTests:
     def test_passing_tests_updates_context(self, tmp_path):
         ctx = make_ctx(tmp_path)
         report = self._make_report(passed=3, failed=0)
+        # sandbox.create() is called by make_ctx — artifacts/ exists
+        (tmp_path / "artifacts" / "test-results.json").write_text(json.dumps(report))
 
         fake_proc = MagicMock()
         fake_proc.returncode = 0
         fake_proc.stdout = ""
         fake_proc.stderr = ""
 
-        import tempfile as _tempfile
-
-        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc), \
-             patch("agent.shared.capabilities.tempfile.TemporaryDirectory") as mock_tmp:
-            # Write the report to a predictable location
-            real_tmp = tmp_path / "pytest_tmp"
-            real_tmp.mkdir()
-            report_path = real_tmp / "report.json"
-            report_path.write_text(json.dumps(report))
-
-            mock_tmp.return_value.__enter__ = MagicMock(return_value=str(real_tmp))
-            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-
+        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc):
             result = run_tests(ctx)
 
         assert result["passed"] is True
@@ -264,22 +257,14 @@ class TestRunTests:
         ctx = make_ctx(tmp_path)
         failures = [{"test": "test_broken", "error": "AssertionError: 1 != 2"}]
         report = self._make_report(passed=1, failed=1, failures=failures)
+        (tmp_path / "artifacts" / "test-results.json").write_text(json.dumps(report))
 
         fake_proc = MagicMock()
         fake_proc.returncode = 1
         fake_proc.stdout = ""
         fake_proc.stderr = ""
 
-        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc), \
-             patch("agent.shared.capabilities.tempfile.TemporaryDirectory") as mock_tmp:
-            real_tmp = tmp_path / "pytest_tmp2"
-            real_tmp.mkdir()
-            report_path = real_tmp / "report.json"
-            report_path.write_text(json.dumps(report))
-
-            mock_tmp.return_value.__enter__ = MagicMock(return_value=str(real_tmp))
-            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-
+        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc):
             result = run_tests(ctx)
 
         assert result["passed"] is False
@@ -288,21 +273,14 @@ class TestRunTests:
 
     def test_missing_report_gives_empty_result(self, tmp_path):
         ctx = make_ctx(tmp_path)
+        # No report written — artifacts/test-results.json absent
 
         fake_proc = MagicMock()
         fake_proc.returncode = 1
         fake_proc.stdout = "ERROR: no tests found"
         fake_proc.stderr = ""
 
-        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc), \
-             patch("agent.shared.capabilities.tempfile.TemporaryDirectory") as mock_tmp:
-            real_tmp = tmp_path / "pytest_empty"
-            real_tmp.mkdir()
-            # No report.json written
-
-            mock_tmp.return_value.__enter__ = MagicMock(return_value=str(real_tmp))
-            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-
+        with patch("agent.shared.capabilities.subprocess.run", return_value=fake_proc):
             result = run_tests(ctx)
 
         assert result["tests_run"] == 0
