@@ -104,10 +104,14 @@ class RunContext:
 
         Stops if:
           - max rounds reached (safety guard)
-          - no lint errors, no type errors, no test failures (clean pass)
+          - at least one round has run AND no lint/type/test errors remain (clean pass)
+
+        Always allows the first round (coder_rounds == 0 → never stop before running once).
         """
         if self.coder_rounds >= self.MAX_CODER_ROUNDS:
             return True
+        if self.coder_rounds == 0:
+            return False  # must run at least once
         return (
             not self.lint_errors
             and not self.type_errors

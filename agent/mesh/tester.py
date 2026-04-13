@@ -111,7 +111,11 @@ async def _write_test_suite(
                     }
                 )
 
-        messages.append({"role": "assistant", "content": response.content})
+        assistant_content = [
+            b.model_dump() if hasattr(b, "model_dump") else b
+            for b in response.content
+        ]
+        messages.append({"role": "assistant", "content": assistant_content})
         messages.append({"role": "user", "content": tool_results})
 
 

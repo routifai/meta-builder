@@ -1,22 +1,31 @@
 """
-Smoke runner — runs all implemented pipeline stages against a real goal.
-Shows exactly what each agent produced so you can see real end-to-end behavior.
+Smoke runner — full pipeline against a real goal via orchestrator.run().
+
+Shows exactly what each phase produced so you can see real end-to-end behavior.
 
 Usage:
-    python scripts/smoke.py "build an agent capable of deep research"
-    python scripts/smoke.py "build an MCP server for Perplexity search and deploy to fly.io"
+    python scripts/smoke.py "build an mcp that sends apple to mars"
+    python scripts/smoke.py "build an MCP server for Perplexity search"
 
-Writes everything to  runs/<run_id>/  — never touches the main skills/ store.
-Exits 0 in all cases — HumanInputRequired and NotImplementedError are informative, not errors.
-
-Implemented stages (auto-detected):
+Pipeline phases (orchestrator):
     [1] prompt_parser
     [2] ambiguity_scorer
     [3] defaults_agent
-    [4] researcher  ──┐  concurrent
-    [5] architect   ──┘
-    [6] coder            (stub — stops here when not yet implemented)
-    ...
+    [1b] feasibility_critic   ← blocks impossible goals immediately
+    [1c] requirement_closure  ← fills missing operational params
+    [2]  researcher ‖ architect (concurrent)
+    [2b] planner
+    [2c] critic (plan)
+    [3]  coder loop
+    [3b] plan_validator
+    [3c] critic (code)
+    [4]  tester
+    [4b] critic (tests)
+    [5]  deployer
+    [6]  monitor_setup
+    [7]  signal_collector → scorer → router
+
+Exits 0 in all cases — blocks and stubs are informative, not errors.
 """
 from __future__ import annotations
 
@@ -29,197 +38,291 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 DEFAULT_GOAL = "build an MCP server for Perplexity search and deploy to fly.io"
 DIVIDER = "─" * 60
+GREEN = "\033[92m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+CYAN = "\033[96m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
 
 
-# ---------------------------------------------------------------------------
-# Printing helpers
-# ---------------------------------------------------------------------------
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _elapsed(t0: float) -> str:
     return f"{time.perf_counter() - t0:.2f}s"
 
 
-def _print_stage(name: str, output: dict, elapsed_str: str) -> None:
+def _ok(msg: str) -> str:
+    return f"{GREEN}✓{RESET}  {msg}"
+
+
+def _warn(msg: str) -> str:
+    return f"{YELLOW}⚠{RESET}  {msg}"
+
+
+def _err(msg: str) -> str:
+    return f"{RED}✗{RESET}  {msg}"
+
+
+def _block(msg: str) -> str:
+    return f"{RED}{BOLD}BLOCKED{RESET}  {msg}"
+
+
+def _section(title: str, elapsed: str = "") -> None:
+    suffix = f"  ({elapsed})" if elapsed else ""
     print(f"\n{DIVIDER}")
-    print(f"  STAGE: {name}  ({elapsed_str})")
+    print(f"  {CYAN}{BOLD}{title}{RESET}{suffix}")
     print(DIVIDER)
-    print(json.dumps(output, indent=2, default=str))
+
+
+def _dump(obj: dict, indent: int = 2) -> None:
+    print(json.dumps(obj, indent=indent, default=str))
 
 
 def _print_banner(goal: str) -> None:
     print(f"\n{'=' * 60}")
-    print(f"  meta-builder smoke run")
-    print(f"  goal: {goal!r}")
+    print(f"  {BOLD}meta-builder smoke run{RESET}")
+    print(f"  goal: {CYAN}{goal!r}{RESET}")
     print(f"{'=' * 60}")
 
 
-def _print_stop(reason: str) -> None:
-    print(f"\n{DIVIDER}")
-    print(f"  PIPELINE STOPPED: {reason}")
-    print(DIVIDER)
+def _print_ctx_summary(ctx) -> None:
+    _section("RUN SUMMARY")
+    print(f"  Run ID          : {ctx.run_id}")
+    print(f"  Phases hit      : {list(ctx.phase_timestamps.keys())}")
+    print(f"  Critic rounds   : {ctx.critic_rounds}")
+    print(f"  Coder rounds    : {ctx.coder_rounds}")
+    print(f"  Tester rounds   : {ctx.tester_rounds}")
+    print(f"  Files written   : {ctx.files_written}")
+    print(f"  Tests written   : {ctx.tests_written}")
+    print(f"  Smoke passed    : {ctx.smoke_tests_passed}")
+    print(f"  Staging URL     : {ctx.staging_url}")
+    if ctx.deploy_failure_reason:
+        print(f"  Deploy failure  : {ctx.deploy_failure_reason}")
+    print()
 
 
-def _print_skill_files(skills_dir: str, skills_written: list[str]) -> None:
-    print(f"\n{DIVIDER}")
-    print("  SKILL FILES WRITTEN")
-    print(DIVIDER)
-    for rel_path in skills_written:
-        full_path = Path(skills_dir) / Path(rel_path).name
-        if full_path.exists():
-            content = full_path.read_text()
-            lines = content.splitlines()
-            print(f"\n  ── {Path(rel_path).name} ({len(content)} chars) ──")
-            for line in lines[:15]:
-                print(f"  {line}")
-            if len(lines) > 15:
-                print(f"  ... ({len(lines) - 15} more lines)")
+# ── Main ──────────────────────────────────────────────────────────────────────
 
-
-def _print_remaining(next_stage_idx: int) -> None:
-    all_stages = [
-        "prompt_parser", "ambiguity_scorer", "defaults_agent",
-        "researcher + architect (concurrent)",
-        "coder", "tester", "deployer", "monitor_setup",
-        "signal_collector", "scorer", "router",
-        "log_watcher", "anomaly_classifier", "context_builder",
-        "fix_agent", "validator", "skills_updater",
-    ]
-    remaining = all_stages[next_stage_idx:]
-    if remaining:
-        print(f"\n{DIVIDER}")
-        print("  REMAINING (not yet implemented)")
-        print(DIVIDER)
-        for i, name in enumerate(remaining, start=next_stage_idx + 1):
-            print(f"  [{i}] {name}")
-
-
-# ---------------------------------------------------------------------------
-# Main pipeline
-# ---------------------------------------------------------------------------
 
 async def main(goal: str) -> None:
     from agent.intent.prompt_parser import parse_prompt
     from agent.intent.ambiguity_scorer import score_unknowns
     from agent.intent.defaults_agent import fill_defaults, HumanInputRequired
-    from agent.mesh.researcher import run as researcher_run
-    from agent.mesh.architect import run as architect_run
 
     _print_banner(goal)
 
-    # ── Stage 1: prompt_parser ─────────────────────────────────────────
-    print("\n[1] prompt_parser — extracting entities...")
+    # ── [1] prompt_parser ─────────────────────────────────────────────────────
+    _section("[1] prompt_parser — extracting entities")
     t0 = time.perf_counter()
     try:
         parsed = parse_prompt(goal)
     except Exception as exc:
-        _print_stop(f"prompt_parser: {type(exc).__name__}: {exc}")
+        print(_err(f"prompt_parser crashed: {type(exc).__name__}: {exc}"))
         return
-    _print_stage("prompt_parser", parsed, _elapsed(t0))
+    _dump(parsed)
+    print(_ok(f"done {_elapsed(t0)}"))
 
-    # ── Stage 2: ambiguity_scorer ──────────────────────────────────────
-    print("\n[2] ambiguity_scorer — scoring unknown fields...")
+    # ── [2] ambiguity_scorer ──────────────────────────────────────────────────
+    _section("[2] ambiguity_scorer — scoring unknowns")
     t0 = time.perf_counter()
     scored = score_unknowns(parsed)
-    _print_stage("ambiguity_scorer", scored, _elapsed(t0))
-
+    _dump(scored)
     if scored["must_ask"]:
-        _print_stop(
-            f"HumanInputRequired — parser could not determine: {scored['must_ask']}\n"
-            f"  Retry with a more specific goal, e.g. add the missing fields explicitly."
-        )
-        return
+        print(_warn(f"must_ask fields: {scored['must_ask']}"))
+        print(_warn("Continuing anyway — requirement_closure will handle gaps"))
+    print(_ok(f"done {_elapsed(t0)}"))
 
-    # ── Stage 3: defaults_agent ────────────────────────────────────────
-    print("\n[3] defaults_agent — filling defaults + run_id...")
+    # ── [3] defaults_agent ────────────────────────────────────────────────────
+    _section("[3] defaults_agent — filling defaults + run_id")
     t0 = time.perf_counter()
     try:
         spec = fill_defaults(scored, parsed)
     except HumanInputRequired as exc:
-        _print_stop(f"HumanInputRequired: {exc.fields}")
+        print(_err(f"HumanInputRequired: {exc.fields}"))
         return
     except Exception as exc:
-        _print_stop(f"defaults_agent: {type(exc).__name__}: {exc}")
+        print(_err(f"defaults_agent crashed: {type(exc).__name__}: {exc}"))
         return
-    _print_stage("defaults_agent → intent_spec", spec, _elapsed(t0))
+    _dump(spec)
+    print(_ok(f"done {_elapsed(t0)}"))
 
-    # ── Stages 4+5: researcher ‖ architect (concurrent) ────────────────
+    # ── Orchestrator (phases 1b onwards) ──────────────────────────────────────
+    _section("HANDING OFF TO ORCHESTRATOR")
+    print(f"  run_id: {spec['run_id']}")
+
     run_id = spec["run_id"]
-    smoke_dir = Path("runs") / run_id
-    smoke_skills_dir = str(smoke_dir / "skills")
-    Path(smoke_skills_dir).mkdir(parents=True, exist_ok=True)
+    output_dir = str(Path("runs") / run_id)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    print(f"\n[4+5] researcher ‖ architect — running concurrently...")
-    print(f"      skills → {smoke_skills_dir}")
-    t0 = time.perf_counter()
+    t_orch = time.perf_counter()
+
     try:
-        research, architecture = await asyncio.gather(
-            researcher_run(spec, skills_dir=smoke_skills_dir),
-            architect_run(spec, {}, skills_dir=smoke_skills_dir),
-        )
+        from agent.orchestrator import run as orchestrator_run
+        ctx = await orchestrator_run(spec, output_dir=output_dir)
     except NotImplementedError as exc:
-        _print_stop(f"researcher or architect not implemented: {exc}")
-        _print_remaining(3)
+        # Expected when downstream agents are stubs — print what we got so far
+        print(_warn(f"Pipeline reached a stub: {exc}"))
+        _print_partial_results(exc, output_dir, run_id)
         return
     except Exception as exc:
-        _print_stop(f"researcher/architect: {type(exc).__name__}: {exc}")
-        raise
-    elapsed_both = _elapsed(t0)
-
-    _print_stage("researcher", research, elapsed_both)
-    _print_skill_files(smoke_skills_dir, research.get("skills_written", []))
-    _print_stage("architect", architecture, elapsed_both)
-
-    # ── Stage 6+: coder (and beyond) ──────────────────────────────────
-    # Detect whether coder is implemented by attempting to import and call it
-    try:
-        from agent.mesh.coder import run as coder_run
-        print(f"\n[6] coder — generating code from architecture...")
-        t0 = time.perf_counter()
-        coder_result = await coder_run(architecture, spec)
-        _print_stage("coder", coder_result, _elapsed(t0))
-        next_idx = 5
-    except NotImplementedError:
-        _print_stop("coder: not yet implemented")
-        _print_remaining(4)
-        _print_summary(run_id, smoke_skills_dir, research, architecture, spec)
+        print(_err(f"Orchestrator crashed: {type(exc).__name__}: {exc}"))
+        import traceback
+        traceback.print_exc()
         return
-    except Exception as exc:
-        _print_stop(f"coder: {type(exc).__name__}: {exc}")
-        raise
 
-    # (tester, deployer, etc. would follow the same pattern)
-    _print_remaining(next_idx)
-    _print_summary(run_id, smoke_skills_dir, research, architecture, spec)
+    elapsed_orch = _elapsed(t_orch)
+    print(_ok(f"Orchestrator returned in {elapsed_orch}"))
+
+    # ── Print phase results ────────────────────────────────────────────────────
+
+    # Phase 1b — feasibility
+    if ctx.feasibility_result:
+        _section("[1b] feasibility_critic result")
+        _dump(ctx.feasibility_result)
+        decision = ctx.feasibility_result.get("decision")
+        if decision == "block":
+            print(_block("Goal is not feasible. Pipeline halted."))
+            if ctx.feasibility_result.get("suggestions"):
+                print(f"\n  {BOLD}Alternative goals:{RESET}")
+                for s in ctx.feasibility_result["suggestions"]:
+                    print(f"    • {s}")
+            _print_ctx_summary(ctx)
+            return
+        elif decision == "refine":
+            print(_warn(f"Goal refined → {ctx.feasibility_result.get('refined_goal')}"))
+        else:
+            print(_ok("Feasibility: proceed"))
+
+    # Phase 1c — closure
+    if ctx.closure_result:
+        _section("[1c] requirement_closure result")
+        _dump(ctx.closure_result)
+        if ctx.closure_result.get("status") == "needs_input":
+            print(_warn("Pipeline needs more info from user:"))
+            for q in ctx.closure_result.get("questions", []):
+                print(f"    ? {q}")
+            _print_ctx_summary(ctx)
+            return
+        if ctx.closure_result.get("auto_filled"):
+            print(_ok(f"Auto-filled: {ctx.closure_result['auto_filled']}"))
+
+    # Phase 2 — mesh
+    if ctx.research_result or ctx.architecture_spec:
+        _section("[2] researcher + architect")
+        if ctx.research_result:
+            print(f"\n  {BOLD}Research:{RESET}")
+            stack = ctx.research_result.get("recommended_stack", {})
+            for domain, tool in stack.items():
+                print(f"    {domain:25s} → {tool}")
+        if ctx.architecture_spec:
+            print(f"\n  {BOLD}Architecture:{RESET}")
+            for f in ctx.architecture_spec.get("file_tree", []):
+                print(f"    {f}")
+            for comp, tech in ctx.architecture_spec.get("tech_choices", {}).items():
+                print(f"    {comp:25s} → {tech}")
+
+    # Phase 2b — planner
+    if ctx.plan_spec:
+        _section("[2b] planner")
+        file_plans = ctx.plan_spec.get("file_plans", {})
+        print(f"  {len(file_plans)} file(s) planned:")
+        for path, plan in file_plans.items():
+            fns = [f["name"] for f in plan.get("functions", [])]
+            cls = [c["name"] for c in plan.get("classes", [])]
+            print(f"    {path}: functions={fns}, classes={cls}")
+
+    # Phase 2c — critic plan
+    if ctx.critic_plan_result:
+        _section("[2c] critic — plan review")
+        _dump(ctx.critic_plan_result)
+        if ctx.critic_plan_result.get("decision") == "block":
+            print(_block("Plan blocked. Pipeline halted."))
+            _print_ctx_summary(ctx)
+            return
+
+    # Phase 3 — coder
+    if ctx.files_written:
+        _section("[3] coder output")
+        print(f"  Files written ({len(ctx.files_written)}):")
+        for f in ctx.files_written:
+            print(f"    {f}")
+        if ctx.lint_errors:
+            print(_warn(f"Lint errors: {ctx.lint_errors}"))
+        elif ctx.lint_passed:
+            print(_ok("Lint passed"))
+        if ctx.type_errors:
+            print(_warn(f"Type errors: {ctx.type_errors}"))
+        elif ctx.type_check_passed:
+            print(_ok("Type check passed"))
+
+    # Phase 3b — plan violations
+    if ctx.plan_violations:
+        _section("[3b] plan_validator violations")
+        for v in ctx.plan_violations:
+            print(f"    {_warn(v)}")
+
+    # Phase 3c — critic code
+    if ctx.critic_code_result:
+        _section("[3c] critic — code review")
+        _dump(ctx.critic_code_result)
+        if ctx.critic_code_result.get("decision") == "block":
+            print(_block("Code blocked. Pipeline halted."))
+            _print_ctx_summary(ctx)
+            return
+
+    # Phase 4 — tester
+    if ctx.tests_written:
+        _section("[4] tester output")
+        print(f"  Test files ({len(ctx.tests_written)}): {ctx.tests_written}")
+        print(f"  Tests run: {ctx.tests_run}  passed: {ctx.tests_passed}  failed: {ctx.tests_failed}")
+        if ctx.coverage_pct:
+            print(f"  Coverage: {ctx.coverage_pct:.1f}%")
+
+    # Phase 4b — critic tests
+    if ctx.critic_test_result:
+        _section("[4b] critic — test review")
+        _dump(ctx.critic_test_result)
+        if ctx.critic_test_result.get("decision") == "block":
+            print(_block("Tests blocked. Pipeline halted."))
+            _print_ctx_summary(ctx)
+            return
+
+    # Phase 5 — deployer
+    _section("[5] deployer")
+    if ctx.dockerfile_path:
+        print(f"  Dockerfile: {ctx.dockerfile_path}")
+    if ctx.staging_url:
+        print(f"  Staging URL: {ctx.staging_url}")
+    if ctx.smoke_tests_passed:
+        print(_ok("Smoke tests PASSED — container is live"))
+    elif ctx.deploy_failure_reason:
+        print(_warn(f"Deploy: {ctx.deploy_failure_reason}"))
+
+    _print_ctx_summary(ctx)
 
 
-def _print_summary(
-    run_id: str,
-    smoke_skills_dir: str,
-    research: dict,
-    architecture: dict,
-    spec: dict,
-) -> None:
-    print(f"\n{'=' * 60}")
-    print("  SMOKE RUN SUMMARY")
-    print(f"{'=' * 60}")
-    print(f"  Run ID       : {run_id}")
-    print(f"  Build target : {spec.get('build_target')}")
-    print(f"  Deploy target: {spec.get('deploy_target')}")
-    print(f"  Skills dir   : {smoke_skills_dir}/")
-    print(f"\n  Recommended stack:")
-    for domain, tool in research.get("recommended_stack", {}).items():
-        print(f"    {domain:25s} → {tool}")
-    print(f"\n  Architecture file_tree ({len(architecture.get('file_tree', []))} files):")
-    for f in architecture.get("file_tree", []):
-        print(f"    {f}")
-    print(f"\n  Tech choices:")
-    for component, tech in architecture.get("tech_choices", {}).items():
-        print(f"    {component:25s} → {tech}")
-    print()
+def _print_partial_results(exc: NotImplementedError, output_dir: str, run_id: str) -> None:
+    """Print what we can from the orchestrator before it hit a stub."""
+    _section("PARTIAL RESULTS")
+    print(f"  Stopped at: {exc}")
+    print(f"  Run output: {output_dir}/")
+
+    # Show any workspace files that exist
+    workspace = Path(output_dir) / "workspace"
+    if workspace.exists():
+        files = list(workspace.rglob("*"))
+        if files:
+            print(f"\n  Files in workspace ({len(files)}):")
+            for f in files:
+                if f.is_file():
+                    print(f"    {f.relative_to(workspace)}")
 
 
 if __name__ == "__main__":

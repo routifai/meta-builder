@@ -330,8 +330,18 @@ async def run(
 
     extracted: dict = tool_block.input
 
+    # The model occasionally serializes file_plans as a JSON string rather than
+    # a nested object — parse it defensively.
+    raw_file_plans = extracted.get("file_plans", {})
+    if isinstance(raw_file_plans, str):
+        import json as _json
+        try:
+            raw_file_plans = _json.loads(raw_file_plans)
+        except Exception:
+            raw_file_plans = {}
+
     return PlanSpec(
-        file_plans=extracted.get("file_plans", {}),
+        file_plans=raw_file_plans,
         entry_point=extracted.get("entry_point", ""),
         test_strategy=extracted.get("test_strategy", ""),
     )

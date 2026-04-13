@@ -22,6 +22,7 @@ Tools available to coder:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any
@@ -42,6 +43,19 @@ from agent.shared.sandbox import SandboxViolation
 
 MODEL = "claude-opus-4-6"
 MAX_TOKENS = 8192
+_RETRY_DELAYS = [10, 30, 60]  # seconds to wait after each 429
+
+
+async def _call_with_retry(client: anthropic.AsyncAnthropic, **kwargs) -> anthropic.types.Message:
+    """Wrap messages.create with exponential backoff on rate limit errors."""
+    for attempt, delay in enumerate(_RETRY_DELAYS + [None]):
+        try:
+            return await client.messages.create(**kwargs)
+        except anthropic.RateLimitError:
+            if delay is None:
+                raise  # exhausted retries
+            await asyncio.sleep(delay)
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 async def run(ctx: RunContext, *, client: anthropic.AsyncAnthropic | None = None) -> None:
@@ -62,7 +76,8 @@ async def run(ctx: RunContext, *, client: anthropic.AsyncAnthropic | None = None
     messages = _build_messages(ctx)
 
     while True:
-        response = await _client.messages.create(
+        response = await _call_with_retry(
+            _client,
             model=MODEL,
             tools=tools,
             messages=messages,
@@ -90,7 +105,14 @@ async def run(ctx: RunContext, *, client: anthropic.AsyncAnthropic | None = None
                 }
             )
 
-        messages.append({"role": "assistant", "content": response.content})
+        # Serialize Pydantic content blocks to plain dicts before feeding back.
+        # Passing SDK objects directly triggers a Pydantic 2.9 serialization bug
+        # ("argument 'by_alias': NoneType cannot be converted to PyBool").
+        assistant_content = [
+            b.model_dump() if hasattr(b, "model_dump") else b
+            for b in response.content
+        ]
+        messages.append({"role": "assistant", "content": assistant_content})
         messages.append({"role": "user", "content": tool_results})
 
 

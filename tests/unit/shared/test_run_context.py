@@ -59,11 +59,11 @@ class TestCoderShouldStop:
         ctx.lint_errors = [{"code": "F401", "message": "unused import"}]
         assert ctx.coder_should_stop() is False
 
-    def test_round_zero_no_errors_stops(self):
-        """Fresh context with no errors → stop immediately (nothing to fix)."""
+    def test_round_zero_no_errors_does_not_stop(self):
+        """Fresh context: coder must always run at least once even if no errors yet."""
         ctx = make_ctx()
         ctx.coder_rounds = 0
-        assert ctx.coder_should_stop() is True
+        assert ctx.coder_should_stop() is False
 
 
 class TestOutputPath:
