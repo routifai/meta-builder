@@ -45,17 +45,16 @@ def setup(*, project_name: str = "meta-builder") -> bool:
         from phoenix.otel import register
 
         port = int(os.getenv("PHOENIX_PORT", "6006"))
+        os.environ.setdefault("PHOENIX_PORT", str(port))
 
         # Start the local Phoenix server (no-op if already running)
-        px.launch_app(port=port)
+        px.launch_app()
 
-        # Register OTel tracer pointing at local Phoenix
-        tracer_provider = register(
-            project_name=project_name,
-            endpoint=f"http://localhost:{port}/v1/traces",
-        )
+        # register() auto-connects to the running Phoenix via gRPC (port 4317)
+        # and sets itself as the global OTel tracer provider
+        tracer_provider = register(project_name=project_name)
 
-        # Auto-instrument all Anthropic SDK calls
+        # Auto-instrument all Anthropic SDK calls (sync + async)
         AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
 
         _initialized = True

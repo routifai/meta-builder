@@ -41,7 +41,7 @@ from agent.shared.knowledge import fill_knowledge_gap, get_knowledge_tool_defini
 from agent.shared.run_context import RunContext
 from agent.shared.sandbox import SandboxViolation
 
-MODEL = "claude-opus-4-6"
+MODEL = os.environ.get("CODER_MODEL", "claude-sonnet-4-6")
 MAX_TOKENS = 8192
 _RETRY_DELAYS = [10, 30, 60]  # seconds to wait after each 429
 

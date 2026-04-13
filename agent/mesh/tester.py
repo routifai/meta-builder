@@ -31,7 +31,7 @@ from agent.shared.capabilities import (
 from agent.shared.run_context import RunContext
 from agent.shared.sandbox import SandboxViolation
 
-MODEL = "claude-opus-4-6"
+MODEL = os.environ.get("TESTER_MODEL", "claude-sonnet-4-6")
 MAX_TOKENS = 8192
 
 
