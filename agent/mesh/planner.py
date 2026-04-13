@@ -310,35 +310,49 @@ async def run(
     if revision_note:
         prompt += f"\n\n---\nRevision note (from previous failed plan):\n{revision_note}\n"
 
-    response = await _client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=_SYSTEM_PROMPT,
-        tools=[_PLANNER_TOOL],
-        tool_choice={"type": "tool", "name": "define_file_plans"},
-        messages=[{"role": "user", "content": prompt}],
-    )
+    # Retry up to 3 times if file_plans comes back empty — haiku sometimes
+    # returns {} for deeply-nested additionalProperties schemas.
+    for attempt in range(3):
+        retry_prompt = prompt
+        if attempt > 0:
+            retry_prompt += (
+                f"\n\nIMPORTANT: Previous attempt returned empty file_plans. "
+                f"You MUST populate file_plans with entries for ALL {len(file_tree)} files: "
+                f"{file_tree}. Do not return an empty object."
+            )
 
-    tool_block = next(
-        (b for b in response.content if b.type == "tool_use"),
-        None,
-    )
-    if tool_block is None:
-        raise RuntimeError(
-            f"Model did not call define_file_plans. Response: {response.content}"
+        response = await _client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=_SYSTEM_PROMPT,
+            tools=[_PLANNER_TOOL],
+            tool_choice={"type": "tool", "name": "define_file_plans"},
+            messages=[{"role": "user", "content": retry_prompt}],
         )
 
-    extracted: dict = tool_block.input
+        tool_block = next(
+            (b for b in response.content if b.type == "tool_use"),
+            None,
+        )
+        if tool_block is None:
+            raise RuntimeError(
+                f"Model did not call define_file_plans. Response: {response.content}"
+            )
 
-    # The model occasionally serializes file_plans as a JSON string rather than
-    # a nested object — parse it defensively.
-    raw_file_plans = extracted.get("file_plans", {})
-    if isinstance(raw_file_plans, str):
-        import json as _json
-        try:
-            raw_file_plans = _json.loads(raw_file_plans)
-        except Exception:
-            raw_file_plans = {}
+        extracted: dict = tool_block.input
+
+        # The model occasionally serializes file_plans as a JSON string rather than
+        # a nested object — parse it defensively.
+        raw_file_plans = extracted.get("file_plans", {})
+        if isinstance(raw_file_plans, str):
+            import json as _json
+            try:
+                raw_file_plans = _json.loads(raw_file_plans)
+            except Exception:
+                raw_file_plans = {}
+
+        if raw_file_plans:  # non-empty — good
+            break
 
     return PlanSpec(
         file_plans=raw_file_plans,
