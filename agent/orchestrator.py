@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 
 from agent.shared.run_context import RunContext
+from agent.shared import telemetry
 
 MAX_CRITIC_ROUNDS = 2
 MAX_PLAN_FIX_ROUNDS = 2
@@ -69,7 +70,8 @@ async def run(
     ctx.mark_phase("feasibility_start")
     from agent.intent.feasibility_critic import evaluate as feasibility_evaluate
 
-    feasibility = await feasibility_evaluate(intent_spec)
+    with telemetry.span("feasibility_critic"):
+        feasibility = await feasibility_evaluate(intent_spec)
     ctx.feasibility_result = dict(feasibility)
 
     if feasibility["decision"] == "block":
@@ -108,17 +110,19 @@ async def run(
     from agent.mesh.researcher import run as researcher_run
     from agent.mesh.architect import run as architect_run
 
-    ctx.research_result, ctx.architecture_spec = await asyncio.gather(
-        researcher_run(intent_spec, skills_dir=skills_dir),
-        architect_run(intent_spec, {}, skills_dir=skills_dir),
-    )
+    with telemetry.span("mesh.researcher+architect"):
+        ctx.research_result, ctx.architecture_spec = await asyncio.gather(
+            researcher_run(intent_spec, skills_dir=skills_dir),
+            architect_run(intent_spec, {}, skills_dir=skills_dir),
+        )
     ctx.mark_phase("mesh_done")
 
     # ── Phase 2b: Planner ─────────────────────────────────────────────────
     ctx.mark_phase("planner_start")
     from agent.mesh.planner import run as planner_run
 
-    ctx.plan_spec = await planner_run(intent_spec, ctx.architecture_spec)
+    with telemetry.span("planner"):
+        ctx.plan_spec = await planner_run(intent_spec, ctx.architecture_spec)
     ctx.mark_phase("planner_done")
 
     # ── Phase 2c: Critic — plan review ────────────────────────────────────
@@ -129,7 +133,8 @@ async def run(
     while plan_critic_rounds < MAX_CRITIC_ROUNDS:
         plan_critic_rounds += 1
         ctx.critic_rounds += 1
-        result = await critic_plan(ctx.plan_spec, ctx.architecture_spec, intent_spec)
+        with telemetry.span(f"critic.plan.round{plan_critic_rounds}"):
+            result = await critic_plan(ctx.plan_spec, ctx.architecture_spec, intent_spec)
         ctx.critic_plan_result = dict(result)
 
         if result["decision"] == "block":
@@ -141,11 +146,12 @@ async def run(
 
         # revise: re-run planner with critic's instructions
         ctx.planner_revision += 1
-        ctx.plan_spec = await planner_run(
-            intent_spec,
-            ctx.architecture_spec,
-            revision_note=result["revision_instructions"],
-        )
+        with telemetry.span(f"planner.revision{ctx.planner_revision}"):
+            ctx.plan_spec = await planner_run(
+                intent_spec,
+                ctx.architecture_spec,
+                revision_note=result["revision_instructions"],
+            )
 
     ctx.mark_phase("critic_plan_done")
 
@@ -157,7 +163,8 @@ async def run(
 
     while not ctx.coder_should_stop():
         ctx.coder_rounds += 1
-        await coder_run(ctx)
+        with telemetry.span(f"coder.round{ctx.coder_rounds}"):
+            await coder_run(ctx)
 
     ctx.mark_phase("coder_done")
 
@@ -172,15 +179,17 @@ async def run(
             plan_fix_rounds += 1
             if should_revise_plan(plan_fix_rounds, ctx.plan_violations):
                 ctx.planner_revision += 1
-                ctx.plan_spec = await planner_run(
-                    intent_spec,
-                    ctx.architecture_spec,
-                    revision_note=build_revision_note(ctx.plan_violations),
-                )
+                with telemetry.span(f"planner.revision{ctx.planner_revision}"):
+                    ctx.plan_spec = await planner_run(
+                        intent_spec,
+                        ctx.architecture_spec,
+                        revision_note=build_revision_note(ctx.plan_violations),
+                    )
             ctx.coder_rounds = 0
             while not ctx.coder_should_stop():
                 ctx.coder_rounds += 1
-                await coder_run(ctx)
+                with telemetry.span(f"coder.round{ctx.coder_rounds}"):
+                    await coder_run(ctx)
             validation = plan_validate(ctx.plan_spec, ctx.file_contents)
             ctx.plan_violations = validation["violations"]
 
@@ -194,7 +203,8 @@ async def run(
     while code_critic_rounds < MAX_CRITIC_ROUNDS:
         code_critic_rounds += 1
         ctx.critic_rounds += 1
-        result = await critic_code(ctx.file_contents, ctx.plan_spec or {}, intent_spec)
+        with telemetry.span(f"critic.code.round{code_critic_rounds}"):
+            result = await critic_code(ctx.file_contents, ctx.plan_spec or {}, intent_spec)
         ctx.critic_code_result = dict(result)
 
         if result["decision"] == "block":
@@ -211,7 +221,8 @@ async def run(
         ctx.coder_rounds = 0
         while not ctx.coder_should_stop():
             ctx.coder_rounds += 1
-            await coder_run(ctx)
+            with telemetry.span(f"coder.round{ctx.coder_rounds}"):
+                await coder_run(ctx)
         ctx.test_failures = []  # clear after coder pass
 
     ctx.mark_phase("critic_code_done")
@@ -223,12 +234,14 @@ async def run(
 
     while ctx.tester_rounds < ctx.MAX_TESTER_ROUNDS:
         ctx.tester_rounds += 1
-        await tester_run(ctx)
+        with telemetry.span(f"tester.round{ctx.tester_rounds}"):
+            await tester_run(ctx)
 
         # Phase 4b: Critic — test quality review
-        test_critic_result = await critic_tests(
-            ctx.file_contents, ctx.tests_written, intent_spec
-        )
+        with telemetry.span(f"critic.tests.round{ctx.tester_rounds}"):
+            test_critic_result = await critic_tests(
+                ctx.file_contents, ctx.tests_written, intent_spec
+            )
         ctx.critic_test_result = dict(test_critic_result)
         ctx.critic_rounds += 1
 
@@ -247,7 +260,8 @@ async def run(
             ctx.coder_rounds = 0
             while not ctx.coder_should_stop():
                 ctx.coder_rounds += 1
-                await coder_run(ctx)
+                with telemetry.span(f"coder.round{ctx.coder_rounds}"):
+                    await coder_run(ctx)
             ctx.test_failures = []
             continue
 
@@ -258,7 +272,8 @@ async def run(
         ctx.coder_rounds = 0
         while not ctx.coder_should_stop():
             ctx.coder_rounds += 1
-            await coder_run(ctx)
+            with telemetry.span(f"coder.round{ctx.coder_rounds}"):
+                await coder_run(ctx)
 
     ctx.mark_phase("tester_done")
 
@@ -268,14 +283,16 @@ async def run(
 
     for _ in range(ctx.MAX_DEPLOY_RETRIES):
         ctx.deploy_retries += 1
-        await deployer_run(ctx)
+        with telemetry.span(f"deployer.attempt{ctx.deploy_retries}"):
+            await deployer_run(ctx)
         if ctx.smoke_tests_passed:
             break
         if ctx.deploy_failure_reason:
             ctx.coder_rounds = 0
             while not ctx.coder_should_stop():
                 ctx.coder_rounds += 1
-                await coder_run(ctx)
+                with telemetry.span(f"coder.round{ctx.coder_rounds}"):
+                    await coder_run(ctx)
 
     ctx.mark_phase("deploy_done")
 

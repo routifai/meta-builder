@@ -41,6 +41,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Boot Phoenix telemetry before any Anthropic clients are created
+from agent.shared.telemetry import setup as _telemetry_setup
+_telemetry_setup(project_name="meta-builder-smoke")
+
 DEFAULT_GOAL = "build an MCP server for Perplexity search and deploy to fly.io"
 DIVIDER = "─" * 60
 GREEN = "\033[92m"
